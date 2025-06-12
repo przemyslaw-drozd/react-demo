@@ -41,7 +41,7 @@ Organize your project with a clear and consistent structure. Follow the "one fol
 Each component should have its own folder with the following files:
 
 ```
-src/componnets/ComponentName/
+src/components/ComponentName/
   ComponentName.tsx       // The main React component file
   ComponentName.styles.ts // The styled-components file for styles
 ```
