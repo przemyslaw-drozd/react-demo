@@ -1,0 +1,146 @@
+name: Teams Test Notification
+description: Send GitHub Actions test result to Microsoft Teams via webhook
+
+inputs:
+  webhook_url:
+    description: Teams Workflows webhook URL
+    required: true
+
+  status:
+    description: Test status, for example success or failure
+    required: true
+
+  exit_code:
+    description: Test exit code
+    required: false
+    default: unknown
+
+  summary:
+    description: Test output summary
+    required: false
+    default: ""
+
+  title:
+    description: Notification title
+    required: false
+    default: GitHub Actions test result
+
+runs:
+  using: composite
+  steps:
+    - name: Build Teams payload
+      shell: bash
+      env:
+        INPUT_STATUS: ${{ inputs.status }}
+        INPUT_EXIT_CODE: ${{ inputs.exit_code }}
+        INPUT_SUMMARY: ${{ inputs.summary }}
+        INPUT_TITLE: ${{ inputs.title }}
+      run: |
+        python3 - <<'PY'
+        import json
+        import os
+
+        status = os.getenv("INPUT_STATUS", "unknown")
+        exit_code = os.getenv("INPUT_EXIT_CODE", "unknown")
+        summary = os.getenv("INPUT_SUMMARY", "").strip()
+        title_input = os.getenv("INPUT_TITLE", "GitHub Actions test result")
+
+        if len(summary) > 2500:
+            summary = summary[-2500:]
+            summary = "...output truncated...\n" + summary
+
+        icon = "✅" if status == "success" else "❌"
+        title = f"{icon} {title_input}: {status}"
+
+        payload = {
+            "type": "message",
+            "attachments": [
+                {
+                    "contentType": "application/vnd.microsoft.card.adaptive",
+                    "content": {
+                        "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+                        "type": "AdaptiveCard",
+                        "version": "1.4",
+                        "body": [
+                            {
+                                "type": "TextBlock",
+                                "text": title,
+                                "weight": "Bolder",
+                                "size": "Medium"
+                            },
+                            {
+                                "type": "FactSet",
+                                "facts": [
+                                    {
+                                        "title": "Repository",
+                                        "value": os.getenv("GITHUB_REPOSITORY", "")
+                                    },
+                                    {
+                                        "title": "Branch",
+                                        "value": os.getenv("GITHUB_REF_NAME", "")
+                                    },
+                                    {
+                                        "title": "Workflow",
+                                        "value": os.getenv("GITHUB_WORKFLOW", "")
+                                    },
+                                    {
+                                        "title": "Run",
+                                        "value": f"#{os.getenv('GITHUB_RUN_NUMBER', '')}"
+                                    },
+                                    {
+                                        "title": "Triggered by",
+                                        "value": os.getenv("GITHUB_ACTOR", "")
+                                    },
+                                    {
+                                        "title": "Exit code",
+                                        "value": exit_code
+                                    }
+                                ]
+                            },
+                            {
+                                "type": "TextBlock",
+                                "text": "Test output",
+                                "weight": "Bolder",
+                                "spacing": "Medium"
+                            },
+                            {
+                                "type": "TextBlock",
+                                "text": summary if summary else "No test output captured.",
+                                "wrap": True,
+                                "fontType": "Monospace"
+                            }
+                        ],
+                        "actions": [
+                            {
+                                "type": "Action.OpenUrl",
+                                "title": "Open workflow run",
+                                "url": (
+                                    f"{os.getenv('GITHUB_SERVER_URL', 'https://github.com')}/"
+                                    f"{os.getenv('GITHUB_REPOSITORY', '')}/actions/runs/"
+                                    f"{os.getenv('GITHUB_RUN_ID', '')}"
+                                )
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+
+        with open("teams-payload.json", "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+        PY
+
+    - name: Send Teams notification
+      shell: bash
+      env:
+        WEBHOOK_URL: ${{ inputs.webhook_url }}
+      run: |
+        if [ -z "$WEBHOOK_URL" ]; then
+          echo "webhook_url input is empty. Skipping Teams notification."
+          exit 0
+        fi
+
+        curl --fail --silent --show-error \
+          -X POST "$WEBHOOK_URL" \
+          -H "Content-Type: application/json" \
+          --data @teams-payload.json
