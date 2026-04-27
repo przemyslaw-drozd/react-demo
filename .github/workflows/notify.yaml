@@ -20,10 +20,6 @@ jobs:
     name: Run tests
     runs-on: ubuntu-latest
 
-    outputs:
-      test_status: ${{ steps.tests.outputs.status }}
-      test_exit_code: ${{ steps.tests.outputs.exit_code }}
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -91,125 +87,13 @@ jobs:
 
       - name: Notify Teams with test result
         if: always()
-        shell: bash
-        env:
-          TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
-          TEST_STATUS: ${{ steps.tests.outputs.status }}
-          TEST_EXIT_CODE: ${{ steps.tests.outputs.exit_code }}
-          TEST_SUMMARY: ${{ steps.tests.outputs.summary }}
-          REPO: ${{ github.repository }}
-          BRANCH: ${{ github.ref_name }}
-          WORKFLOW: ${{ github.workflow }}
-          RUN_ID: ${{ github.run_id }}
-          RUN_NUMBER: ${{ github.run_number }}
-          ACTOR: ${{ github.actor }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          if [ -z "$TEAMS_WEBHOOK_URL" ]; then
-            echo "TEAMS_WEBHOOK_URL is not configured. Skipping Teams notification."
-            exit 0
-          fi
-
-          python3 - <<'PY'
-          import json
-          import os
-
-          status = os.getenv("TEST_STATUS", "unknown")
-          exit_code = os.getenv("TEST_EXIT_CODE", "unknown")
-          summary = os.getenv("TEST_SUMMARY", "").strip()
-
-          if len(summary) > 2500:
-              summary = summary[-2500:]
-              summary = "...output truncated...\n" + summary
-
-          icon = "✅" if status == "success" else "❌"
-          title = f"{icon} GitHub Actions tests: {status}"
-
-          payload = {
-              "type": "message",
-              "attachments": [
-                  {
-                      "contentType": "application/vnd.microsoft.card.adaptive",
-                      "content": {
-                          "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
-                          "type": "AdaptiveCard",
-                          "version": "1.4",
-                          "body": [
-                              {
-                                  "type": "TextBlock",
-                                  "text": title,
-                                  "weight": "Bolder",
-                                  "size": "Medium"
-                              },
-                              {
-                                  "type": "FactSet",
-                                  "facts": [
-                                      {
-                                          "title": "Repository",
-                                          "value": os.getenv("REPO", "")
-                                      },
-                                      {
-                                          "title": "Branch",
-                                          "value": os.getenv("BRANCH", "")
-                                      },
-                                      {
-                                          "title": "Workflow",
-                                          "value": os.getenv("WORKFLOW", "")
-                                      },
-                                      {
-                                          "title": "Run",
-                                          "value": f"#{os.getenv('RUN_NUMBER', '')}"
-                                      },
-                                      {
-                                          "title": "Triggered by",
-                                          "value": os.getenv("ACTOR", "")
-                                      },
-                                      {
-                                          "title": "Exit code",
-                                          "value": exit_code
-                                      }
-                                  ]
-                              },
-                              {
-                                  "type": "TextBlock",
-                                  "text": "Test output",
-                                  "weight": "Bolder",
-                                  "spacing": "Medium"
-                              },
-                              {
-                                  "type": "TextBlock",
-                                  "text": summary if summary else "No test output captured.",
-                                  "wrap": True,
-                                  "fontType": "Monospace"
-                              }
-                          ],
-                          "actions": [
-                              {
-                                  "type": "Action.OpenUrl",
-                                  "title": "Open workflow run",
-                                  "url": os.getenv("RUN_URL", "")
-                              }
-                          ]
-                      }
-                  }
-              ]
-          }
-
-          with open("teams-payload.json", "w", encoding="utf-8") as f:
-              json.dump(payload, f)
-          PY
-
-          curl --fail --silent --show-error \
-            -X POST "$TEAMS_WEBHOOK_URL" \
-            -H "Content-Type: application/json" \
-            --data @teams-payload.json
-
-      - name: Fail workflow if tests failed
-        if: always() && steps.tests.outputs.exit_code != '0'
-        shell: bash
-        run: |
-          echo "Tests failed. Failing workflow after Teams notification."
-          exit 1
+        uses: ./.github/actions/teams-notify
+        with:
+          webhook_url: ${{ secrets.TEAMS_WEBHOOK_URL }}
+          status: ${{ steps.tests.outputs.status }}
+          exit_code: ${{ steps.tests.outputs.exit_code }}
+          summary: ${{ steps.tests.outputs.summary }}
+          title: GitHub Actions tests
 
   deploy:
     name: Deploy to production
@@ -219,11 +103,7 @@ jobs:
     environment: production
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Deploy
         shell: bash
         run: |
           echo "Deploying to production..."
-          echo "This job started after production environment approval."
